@@ -26,9 +26,7 @@
 
     <div id="call-room">
         <h1>Secret Call Room</h1>
-        <p>Share this room ID with the other person: <span id="room-id"></span></p>
-        <input type="text" id="peer-room" placeholder="Enter peer's room ID">
-        <button onclick="connectToPeer()">Connect</button>
+        <p>Connected! Start a call below.</p>
         
         <div>
             <video id="local-video" autoplay muted></video>
@@ -47,79 +45,103 @@
         </div>
     </div>
 
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script> <!-- PeerJS for signaling -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
     <script>
-        const PASSWORD = "Nishant@123";
-        let peer, localStream, remoteStream, call;
-        let roomId = Math.random().toString(36).substr(2, 9);
+        // PASTE YOUR FIREBASE CONFIG HERE (from Firebase project settings)
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
+            projectId: "YOUR_PROJECT",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "YOUR_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+        firebase.initializeApp(firebaseConfig);
+        const database = firebase.database();
+
+        const PASSWORD = "Nishant@123"; // Shared password for the room
+        let localStream, remoteStream, peerConnection;
+        let roomRef = database.ref('rooms/' + PASSWORD); // Room based on password
 
         function checkPassword() {
             const input = document.getElementById('password').value;
             if (input === PASSWORD) {
                 document.getElementById('password-prompt').style.display = 'none';
                 document.getElementById('call-room').style.display = 'block';
-                document.getElementById('room-id').textContent = roomId;
-                initPeerJS();
+                initWebRTC();
             } else {
                 alert('Incorrect password!');
             }
         }
 
-        function initPeerJS() {
-            peer = new Peer(roomId); // Use room ID as peer ID
-            peer.on('open', id => console.log('My peer ID is: ' + id));
-            peer.on('call', incomingCall => {
-                navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
-                    localStream = stream;
-                    document.getElementById('local-video').srcObject = stream;
-                    incomingCall.answer(stream);
-                    incomingCall.on('stream', remoteStream => {
-                        document.getElementById('remote-video').srcObject = remoteStream;
-                    });
-                });
-            });
+        async function initWebRTC() {
+            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+            document.getElementById('local-video').srcObject = localStream;
+            createPeerConnection();
+            listenForOffers();
         }
 
-        function connectToPeer() {
-            const peerRoom = document.getElementById('peer-room').value;
-            if (peerRoom !== roomId) {
-                alert('Room IDs must match for connection!');
-                return;
-            }
-            // PeerJS handles connection automatically
-            alert('Connected! Now start a call.');
+        function createPeerConnection() {
+            peerConnection = new RTCPeerConnection();
+            localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
+            peerConnection.ontrack = event => {
+                remoteStream = event.streams[0];
+                document.getElementById('remote-video').srcObject = remoteStream;
+            };
+            peerConnection.onicecandidate = event => {
+                if (event.candidate) {
+                    roomRef.child('iceCandidates').push(event.candidate.toJSON());
+                }
+            };
+        }
+
+        function listenForOffers() {
+            roomRef.child('offers').on('child_added', snapshot => {
+                const offer = snapshot.val();
+                peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                peerConnection.createAnswer().then(answer => {
+                    peerConnection.setLocalDescription(answer);
+                    roomRef.child('answers').push(answer);
+                });
+            });
+            roomRef.child('answers').on('child_added', snapshot => {
+                const answer = snapshot.val();
+                peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            });
+            roomRef.child('iceCandidates').on('child_added', snapshot => {
+                const candidate = snapshot.val();
+                peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+            });
         }
 
         async function startCall() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
-            const conn = peer.connect(roomId); // Connect to peer
-            call = peer.call(roomId, localStream);
-            call.on('stream', remoteStream => {
-                document.getElementById('remote-video').srcObject = remoteStream;
-            });
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            roomRef.child('offers').push(offer);
         }
 
         async function startVoiceCall() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: false, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
-            call = peer.call(roomId, localStream);
-            call.on('stream', remoteStream => {
-                document.getElementById('remote-video').srcObject = remoteStream;
-            });
+            localStream.getVideoTracks().forEach(track => track.enabled = false);
+            startCall();
         }
 
         async function shareScreen() {
             const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
             document.getElementById('local-video').srcObject = screenStream;
-            if (call) call.peerConnection.getSenders()[0].replaceTrack(screenStream.getVideoTracks()[0]);
+            if (peerConnection) {
+                const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+                sender.replaceTrack(screenStream.getVideoTracks()[0]);
+            }
         }
 
         function endCall() {
-            if (call) call.close();
+            if (peerConnection) peerConnection.close();
             if (localStream) localStream.getTracks().forEach(track => track.stop());
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
+            roomRef.remove(); // Clear room data
         }
 
         function toggleBackgroundBlur() {
