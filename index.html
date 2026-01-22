@@ -12,7 +12,7 @@
         button { margin: 10px; padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
         button:hover { background: #0056b3; }
         .blur { filter: blur(10px); }
-        .face-filter { filter: hue-rotate(90deg) saturate(2); }
+        .face-filter { filter: hue-rotate(90deg) saturate(2); } /* Simple red tint filter */
         #effects { margin-top: 20px; }
     </style>
 </head>
@@ -26,7 +26,9 @@
 
     <div id="call-room">
         <h1>Secret Call Room</h1>
-        <p>Connected! Start a call below.</p>
+        <p>Share this room ID with the other person: <span id="room-id"></span></p>
+        <input type="text" id="peer-room" placeholder="Enter peer's room ID">
+        <button onclick="connectToPeer()">Connect</button>
         
         <div>
             <video id="local-video" autoplay muted></video>
@@ -45,31 +47,18 @@
         </div>
     </div>
 
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script> <!-- WebRTC adapter -->
     <script>
-        // PASTE YOUR FIREBASE CONFIG HERE (from Firebase project settings)
-        const firebaseConfig = {
-            apiKey: "YOUR_API_KEY",
-            authDomain: "YOUR_PROJECT.firebaseapp.com",
-            databaseURL: "https://YOUR_PROJECT-default-rtdb.firebaseio.com",
-            projectId: "YOUR_PROJECT",
-            storageBucket: "YOUR_PROJECT.appspot.com",
-            messagingSenderId: "YOUR_SENDER_ID",
-            appId: "YOUR_APP_ID"
-        };
-        firebase.initializeApp(firebaseConfig);
-        const database = firebase.database();
-
-        const PASSWORD = "Nishant@123"; // Shared password for the room
+        const PASSWORD = "Nishant@123"; // Change this to your desired password
         let localStream, remoteStream, peerConnection;
-        let roomRef = database.ref('rooms/' + PASSWORD); // Room based on password
+        let roomId = Math.random().toString(36).substr(2, 9); // Simple random room ID
 
         function checkPassword() {
             const input = document.getElementById('password').value;
             if (input === PASSWORD) {
                 document.getElementById('password-prompt').style.display = 'none';
                 document.getElementById('call-room').style.display = 'block';
+                document.getElementById('room-id').textContent = roomId;
                 initWebRTC();
             } else {
                 alert('Incorrect password!');
@@ -77,10 +66,22 @@
         }
 
         async function initWebRTC() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('local-video').srcObject = localStream;
+            } catch (err) {
+                console.error('Error accessing media devices:', err);
+            }
+        }
+
+        function connectToPeer() {
+            const peerRoom = document.getElementById('peer-room').value;
+            if (peerRoom !== roomId) {
+                alert('Room IDs must match for connection!');
+                return;
+            }
+            // In a real app, use signaling server. Here, assume manual exchange.
             createPeerConnection();
-            listenForOffers();
         }
 
         function createPeerConnection() {
@@ -92,47 +93,37 @@
             };
             peerConnection.onicecandidate = event => {
                 if (event.candidate) {
-                    roomRef.child('iceCandidates').push(event.candidate.toJSON());
+                    // In real app, send to signaling server. Here, log for manual exchange.
+                    console.log('ICE candidate:', JSON.stringify(event.candidate));
                 }
             };
         }
 
-        function listenForOffers() {
-            roomRef.child('offers').on('child_added', snapshot => {
-                const offer = snapshot.val();
-                peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                peerConnection.createAnswer().then(answer => {
-                    peerConnection.setLocalDescription(answer);
-                    roomRef.child('answers').push(answer);
-                });
-            });
-            roomRef.child('answers').on('child_added', snapshot => {
-                const answer = snapshot.val();
-                peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-            });
-            roomRef.child('iceCandidates').on('child_added', snapshot => {
-                const candidate = snapshot.val();
-                peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-            });
-        }
-
         async function startCall() {
+            if (!peerConnection) createPeerConnection();
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
-            roomRef.child('offers').push(offer);
+            // Manually share offer with peer (in real app, via server).
+            console.log('Offer:', JSON.stringify(offer));
         }
 
         async function startVoiceCall() {
+            // Similar to video, but disable video.
             localStream.getVideoTracks().forEach(track => track.enabled = false);
             startCall();
         }
 
         async function shareScreen() {
-            const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-            document.getElementById('local-video').srcObject = screenStream;
-            if (peerConnection) {
-                const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-                sender.replaceTrack(screenStream.getVideoTracks()[0]);
+            try {
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                document.getElementById('local-video').srcObject = screenStream;
+                // Replace video track in peer connection.
+                if (peerConnection) {
+                    const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
+                }
+            } catch (err) {
+                console.error('Error sharing screen:', err);
             }
         }
 
@@ -141,7 +132,6 @@
             if (localStream) localStream.getTracks().forEach(track => track.stop());
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
-            roomRef.remove(); // Clear room data
         }
 
         function toggleBackgroundBlur() {
@@ -153,6 +143,19 @@
             const video = document.getElementById('local-video');
             video.classList.toggle('face-filter');
         }
+
+        // For signaling (basic): In a real setup, use WebSockets. Here, peers must manually exchange SDP/ICE.
+        // Example: Copy console logs and paste into peer's console to set remote description.
+        window.setRemoteDescription = async (sdp) => {
+            if (peerConnection) {
+                await peerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
+            }
+        };
+        window.addIceCandidate = async (candidate) => {
+            if (peerConnection) {
+                await peerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(candidate)));
+            }
+        };
     </script>
 </body>
 </html>
