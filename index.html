@@ -5,15 +5,88 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Secret ICT Call Room</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f0f0f0; text-align: center; padding: 20px; }
-        #password-prompt { display: block; }
-        #call-room { display: none; }
-        video { width: 100%; max-width: 400px; border: 2px solid #333; margin: 10px; }
-        button { margin: 10px; padding: 10px 20px; background: #007bff; color: white; border: none; cursor: pointer; }
-        button:hover { background: #0056b3; }
-        .blur { filter: blur(10px); }
-        .face-filter { filter: hue-rotate(90deg) saturate(2); }
-        #effects { margin-top: 20px; }
+        body {
+            font-family: Arial, sans-serif;
+            background: #f0f0f0;
+            text-align: center;
+            padding: 20px;
+        }
+        #password-prompt {
+            display: block;
+        }
+        #call-room {
+            display: none;
+        }
+        video {
+            width: 100%;
+            max-width: 400px;
+            border: 2px solid #333;
+            margin: 10px;
+        }
+        button {
+            margin: 10px;
+            padding: 10px 20px;
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        .blur {
+            filter: blur(10px);
+        }
+        .face-filter {
+            filter: hue-rotate(90deg) saturate(2);
+        }
+        .glasses {
+            /* Simple overlay for glasses effect - requires positioning */
+            position: relative;
+        }
+        .glasses::after {
+            content: "";
+            position: absolute;
+            top: 30%;
+            left: 20%;
+            width: 60%;
+            height: 20%;
+            background: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjUwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNTAiIGZpbGw9Im5vbmUiIHN0cm9rZT0iYmxhY2siIHN0cm9rZS13aWR0aD0iNSIvPjwvc3ZnPg==') no-repeat center;
+            background-size: contain;
+            pointer-events: none;
+        }
+        .green-bg {
+            background: green;
+        }
+        .hat {
+            /* Simple hat overlay */
+            position: relative;
+        }
+        .hat::before {
+            content: "";
+            position: absolute;
+            top: 0;
+            left: 10%;
+            width: 80%;
+            height: 20%;
+            background: url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjUwIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxyZWN0IHdpZHRoPSIxMDAiIGhlaWdodD0iNTAiIGZpbGw9ImJsYWNrIi8+PC9zdmc+') no-repeat center;
+            background-size: contain;
+            pointer-events: none;
+        }
+        #chat {
+            margin-top: 20px;
+            border: 1px solid #ccc;
+            padding: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        #chat-messages {
+            text-align: left;
+        }
+        #chat-input {
+            width: 80%;
+            padding: 5px;
+        }
     </style>
 </head>
 <body>
@@ -23,28 +96,33 @@
         <input type="password" id="password" placeholder="Password">
         <button onclick="checkPassword()">Enter</button>
     </div>
-
     <div id="call-room">
         <h1>Secret Call Room</h1>
         <p>Connected! Start a call below.</p>
-        
         <div>
             <video id="local-video" autoplay muted></video>
             <video id="remote-video" autoplay></video>
         </div>
-        
         <button onclick="startCall()">Start Video Call</button>
         <button onclick="startVoiceCall()">Start Voice Call</button>
         <button onclick="shareScreen()">Share Screen</button>
         <button onclick="endCall()">End Call</button>
-        
         <div id="effects">
             <h3>Effects</h3>
             <button onclick="toggleBackgroundBlur()">Toggle Background Blur</button>
             <button onclick="toggleFaceFilter()">Toggle Face Filter</button>
+            <button onclick="toggleGlasses()">Toggle Glasses</button>
+            <button onclick="toggleGreenBackground()">Toggle Green Background</button>
+            <button onclick="toggleHat()">Toggle Hat</button>
+            <!-- Add more effects as needed -->
+        </div>
+        <div id="chat">
+            <h3>AI Chat (Nepali)</h3>
+            <div id="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Type your message...">
+            <button onclick="sendMessage()">Send</button>
         </div>
     </div>
-
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database.js"></script>
     <script>
@@ -60,10 +138,10 @@
         };
         firebase.initializeApp(firebaseConfig);
         const database = firebase.database();
-
         const PASSWORD = "Nishant@123"; // Shared password for the room
         let localStream, remoteStream, peerConnection;
         let roomRef = database.ref('rooms/' + PASSWORD); // Room based on password
+        let isCaller = false; // To determine who initiates the call
 
         function checkPassword() {
             const input = document.getElementById('password').value;
@@ -77,14 +155,23 @@
         }
 
         async function initWebRTC() {
-            localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-            document.getElementById('local-video').srcObject = localStream;
-            createPeerConnection();
-            listenForOffers();
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                document.getElementById('local-video').srcObject = localStream;
+                createPeerConnection();
+                listenForConnection();
+            } catch (error) {
+                console.error('Error accessing media devices.', error);
+            }
         }
 
         function createPeerConnection() {
-            peerConnection = new RTCPeerConnection();
+            const configuration = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' } // Add more STUN/TURN servers if needed
+                ]
+            };
+            peerConnection = new RTCPeerConnection(configuration);
             localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
             peerConnection.ontrack = event => {
                 remoteStream = event.streams[0];
@@ -95,21 +182,35 @@
                     roomRef.child('iceCandidates').push(event.candidate.toJSON());
                 }
             };
+            peerConnection.onconnectionstatechange = () => {
+                if (peerConnection.connectionState === 'connected') {
+                    console.log('Peers connected');
+                }
+            };
         }
 
-        function listenForOffers() {
+        function listenForConnection() {
+            // Listen for offers (caller)
             roomRef.child('offers').on('child_added', snapshot => {
-                const offer = snapshot.val();
-                peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-                peerConnection.createAnswer().then(answer => {
-                    peerConnection.setLocalDescription(answer);
-                    roomRef.child('answers').push(answer);
-                });
+                if (!isCaller) {
+                    const offer = snapshot.val();
+                    peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+                    peerConnection.createAnswer().then(answer => {
+                        peerConnection.setLocalDescription(answer);
+                        roomRef.child('answers').push(answer);
+                    });
+                }
             });
+
+            // Listen for answers (callee)
             roomRef.child('answers').on('child_added', snapshot => {
-                const answer = snapshot.val();
-                peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                if (isCaller) {
+                    const answer = snapshot.val();
+                    peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+                }
             });
+
+            // Listen for ICE candidates
             roomRef.child('iceCandidates').on('child_added', snapshot => {
                 const candidate = snapshot.val();
                 peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
@@ -117,6 +218,7 @@
         }
 
         async function startCall() {
+            isCaller = true;
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
             roomRef.child('offers').push(offer);
@@ -128,11 +230,15 @@
         }
 
         async function shareScreen() {
-            const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-            document.getElementById('local-video').srcObject = screenStream;
-            if (peerConnection) {
-                const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-                sender.replaceTrack(screenStream.getVideoTracks()[0]);
+            try {
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                document.getElementById('local-video').srcObject = screenStream;
+                if (peerConnection) {
+                    const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+                    sender.replaceTrack(screenStream.getVideoTracks()[0]);
+                }
+            } catch (error) {
+                console.error('Error sharing screen.', error);
             }
         }
 
@@ -142,8 +248,10 @@
             document.getElementById('local-video').srcObject = null;
             document.getElementById('remote-video').srcObject = null;
             roomRef.remove(); // Clear room data
+            isCaller = false;
         }
 
+        // Effects functions
         function toggleBackgroundBlur() {
             const video = document.getElementById('local-video');
             video.classList.toggle('blur');
@@ -152,6 +260,64 @@
         function toggleFaceFilter() {
             const video = document.getElementById('local-video');
             video.classList.toggle('face-filter');
+        }
+
+        function toggleGlasses() {
+            const video = document.getElementById('local-video');
+            video.classList.toggle('glasses');
+        }
+
+        function toggleGreenBackground() {
+            const video = document.getElementById('local-video');
+            video.classList.toggle('green-bg');
+        }
+
+        function toggleHat() {
+            const video = document.getElementById('local-video');
+            video.classList.toggle('hat');
+        }
+
+        // Chat functions
+        function sendMessage() {
+            const input = document.getElementById('chat-input');
+            const message = input.value.trim();
+            if (message) {
+                addMessage('You: ' + message);
+                input.value = '';
+                // Send to AI for response
+                getAIResponse(message);
+            }
+        }
+
+        function addMessage(message) {
+            const messages = document.getElementById('chat-messages');
+            const msgDiv = document.createElement('div');
+            msgDiv.textContent = message;
+            messages.appendChild(msgDiv);
+            messages.scrollTop = messages.scrollHeight;
+        }
+
+        async function getAIResponse(userMessage) {
+            // Using OpenAI API as an example (replace with your API key and endpoint)
+            // Note: This requires server-side proxy for security, as API keys should not be exposed client-side.
+            // For demo, assuming a proxy endpoint.
+            const response = await fetch('https://your-proxy-endpoint.com/chat', { // Replace with actual proxy
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer YOUR_OPENAI_API_KEY' // Secure this!
+                },
+                body: JSON.stringify({
+                    model: 'gpt-3.5-turbo',
+                    messages: [
+                        { role: 'system', content: 'You are a helpful AI that responds in Nepali. Facilitate conversation between two users.' },
+                        { role: 'user', content: userMessage }
+                    ]
+                })
+            });
+            const data = await response.json();
+            const aiMessage = data.choices[0].message.content;
+            addMessage('AI: ' + aiMessage);
         }
     </script>
 </body>
